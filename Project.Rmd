@@ -1,0 +1,746 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+Read Libraries
+
+
+```{r}
+#Read libraries packages
+
+library(caret)
+library(e1071)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+library(mlbench)
+library(gbm)
+library(data.tree)
+library(ggplot2)
+library(leaflet)
+library(rgdal)
+library(dplyr)
+library(rnaturalearth)
+library(WDI)
+library(tigris)
+```
+
+```{r}
+setwd("C:\\Users\\Daniel\\Documents\\UConn Spring 2021\\Case Competition\\R")
+```
+
+```{r}
+data <- read.csv("C:/Users/Daniel/Documents/UConn Spring 2021/Case Competition/R/life_expectancy_data_set.csv",fileEncoding="UTF-8-BOM")
+data$canlegal <- factor(data$canlegal)
+summary(data)
+
+```
+
+#Exploratory Data Analysis
+```{r}
+#Full data plotting
+pcpdata <- data[,-1] #Remove state
+pcpdata <- pcpdata[,-7]#Remove Prescriptions filled
+pcpdata <- pcpdata[,-7]#Remove Population
+
+pcpdata$canlegal <- as.numeric(pcpdata$canlegal)
+pcpdata$canlegal[pcpdata$canlegal == "illegal"] <- 0
+pcpdata$canlegal[pcpdata$canlegal == "cbd"] <- 1
+pcpdata$canlegal[pcpdata$canlegal == "medicinal"] <- 2
+pcpdata$canlegal[pcpdata$canlegal == "legal"] <- 3
+
+pcpdata$lifeexprange <- as.factor(pcpdata$lifeexprange)
+
+for(i in 1:ncol(pcpdata)){
+  pcpdata[,i] <- as.numeric(pcpdata[,i])
+}
+
+pcpdata.pca <- prcomp(pcpdata, scale = TRUE)
+
+
+pca.var <- pcpdata.pca$sdev^2
+pve <- pca.var/sum(pca.var)
+plot(cumsum(pve), xlab = "Principal Component", ylab = "Cumulative Proportion of Variance Explained", ylim = c(0,1), type = 'b')
+
+biplot(pcpdata.pca, scale=0)
+
+library(pca3d)
+
+pca3d(pcpdata.pca, group = pcpdata$lifeexprange, show.ellipses = FALSE, show.plane = FALSE, show.scale= TRUE, legend = "topleft", ellipse.ci = .90)
+pca3d(pcpdata.pca, group = pcpdata$lifeexprange, show.ellipses = TRUE, show.plane = FALSE, show.scale= TRUE, legend = "topleft", ellipse.ci = .90)
+
+```
+
+```{r}
+#rgl 3dpca code
+#3D Plot for variable correlations
+library(rgl)
+pc <- princomp(pcpdata, cor=TRUE, scores=TRUE)
+summary(pc)
+plot(pc, type="lines")
+biplot(pc)
+plot3d(pc$scores[,1:3], col = "black")
+
+
+text3d(pc$loadings[,1:3], texts=rownames(pc$loadings), col="red")
+coords <- NULL
+for (i in 1:nrow(pc$loadings)) {
+  coords <- rbind(coords, rbind(c(0,0,0),pc$loadings[i,1:3]))
+}
+lines3d(coords, col="red", lwd=2)
+```
+
+
+
+#Glm
+```{r}
+dataglm <- data
+
+glm <- glm(formula =  avglifeexp ~ . -region -population - lifeexprange -cannabis. -canlegal -prescriptionfill, family = gaussian(link = "identity"), data = dataglm)
+summary(glm)
+
+predictyhat <- predict(glm, newdata = dataglm, type = "response") # Predict the values of the Test set, using the current linear regression model.
+summary(predictyhat)
+summary(glm$fitted.values)
+plot(glm$fitted.values)
+plot(data$avglifeexp)
+
+df <- data.frame(glm$fitted.values,data$avglifeexp)
+
+plot(glm$residuals)
+
+summary(predictyhat - data$avglifeexp)
+
+#Visualize the relationship between the observations and predictions
+dMin <- min(data$avglifeexp) #The minimum 
+dMax <- max(data$avglifeexp) #The maximum 
+
+dev.new(width = 4, height =4)
+par(mar = c(4,4,1,1))
+plot(data$avglifeexp, predictyhat, xlab = "Actual exp", ylab = "Predicted exp")
+lines(c(dMin,dMax), c(dMin,dMax))
+
+
+
+dataglm$lifeexprange[dataglm$lifeexprange == "74-76"] <- 0
+dataglm$lifeexprange[dataglm$lifeexprange == "76-78"] <- 1
+dataglm$lifeexprange[dataglm$lifeexprange == "78-80"] <- 2
+dataglm$lifeexprange[dataglm$lifeexprange == "80-82"] <- 3
+dataglm$lifeexprange <- as.numeric(dataglm$lifeexprange)
+glm2 <- glm(formula =  lifeexprange ~ . -avglifeexp -region -population -cannabis. -canlegal -prescriptionfill, family = gaussian(link = "identity"), data = dataglm)
+summary(glm2)
+plot(glm2$fitted.values)
+plot(glm2$residuals)
+
+lm <- lm(avglifeexp ~ . -region -population - lifeexprange -cannabis. -canlegal -prescriptionfill,data )
+summary(lm)
+plot(lm)
+```
+
+```{r}
+# Calling the rpart package
+library(rpart)
+
+data
+treedata <- data[,-1]
+treedata <- treedata[,-7]
+treedata <- treedata[,-7]
+treedata <- treedata[,-5]
+treedata <- treedata[,-11]
+# Fitting our regression tree, using "BMI" as our response variable, all of the independent variables except weight, using our training dataset, and anova as the method
+tree1 <- rpart(avglifeexp ~ ., data=treedata , method = "anova")
+tree1
+
+```
+```{r}
+par(mar=c(1,1,1,1))
+
+# Plotting the tree
+plot(tree1 , uniform=T, margin =0.04) 
+
+# Adding labels to the tree
+text(tree1 , use.n = TRUE)
+
+library(rpart.plot)
+
+rpart.plot(tree1)
+
+# Calculates variable importance
+vImp <- tree1$variable.importance
+
+# Taking a look at the summary
+vImp
+
+# Scaling the summary and plotting them in bar plot form
+vImp <- vImp * 100 / max(vImp)
+ind <- order(vImp)
+par(las =2) # make label text perpendicular to axis
+par(mar=c(3,8,1,1)) # increase y-axis margin.
+barplot(vImp[ind], main="", horiz=TRUE , names.arg=names(vImp[ind])) #Display the barplot
+```
+
+```{r}
+#Use the Bagging randomForest method
+
+library(randomForest)
+
+# Setting a seed allows us to reproduce the randomly selected cross-validation datasets, in case ourselves or another user needs to replicate our work
+set.seed(1)
+
+# Using the randomForest function with mtry set equal to the number of predictor variables in our dataset, using a response variable facepos and all the independent variables except weight.
+
+bag1 <- randomForest(avglifeexp ~ ., data=treedata , mtry =9, importance=TRUE)
+
+# Taking a look at the summary of our Bagging
+bag1
+plot(bag1)
+bag1$importance
+```
+
+
+```{r}
+#RandomForest
+forest <- randomForest(avglifeexp ~ ., data=treedata , mtry =3, importance=TRUE)
+forest
+plot(forest)
+forest$importance
+```
+
+```{r}
+library(gbm)
+
+set.seed(1)
+
+# Using the gbm function to run a Boosting model with BMI as the response variable, all independent variables, assuming a  distribution (the response is 0 or 1 ), limiting it to make 5,000 trees, and limiting each tree to 3 splits
+boost1 <- gbm(avglifeexp ~ ., data=treedata, distribution="gaussian", n.trees =5000, interaction.depth =1)
+
+summary(boost1)
+plot(boost1)
+
+treedata
+```
+
+```{r}
+# Performing hierarchical clustering using a complete linkage and Euclidean distance
+hc.complete = hclust(dist(data), method="complete")
+
+# Taking a look at the resulting dendrograms
+plot(hc.complete ,main="Complete Linkage", xlab="", sub="", cex=.9)
+```
+
+
+```{r}
+#Importing data on geographic areas
+
+
+#Get geographical codes for cities and states
+geocodes <- read.csv("C:\\Users\\Daniel\\Documents\\UConn Spring 2021\\Case Competition\\R\\uscities2.csv")
+
+states <- states(cb=F)
+
+#states %>% leaflet() %>% addTiles() %>% addPolygons(popup=~NAME)
+
+#Extract lng and lat from geocodes and save in a new data set
+address_and_code <- data.frame(State = geocodes$state_name,
+                               City = geocodes$city, 
+                               Lng = geocodes$lng,
+                               Lat = geocodes$lat)
+
+address_and_code <- subset(address_and_code, select = -City)
+address_and_code <- address_and_code %>% 
+  distinct(State, .keep_all = TRUE)
+
+address_and_code <- subset(address_and_code, address_and_code$State != "Puerto Rico")
+
+address_and_code$State <- tolower(address_and_code$State)
+```
+
+Obesity Leaflet visualization
+
+```{r}
+#Save different Lng and Lat in our 'visual' data frame combined with our data data frame 
+vis_data <- data[order(data[,'region']),]
+
+address_and_code <- address_and_code[order(address_and_code[,'State']),]
+
+vis_data <- data.frame(vis_data, 
+                       Lng = address_and_code$Lng, 
+                       Lat = address_and_code$Lat)
+
+vis_data <- vis_data[order(vis_data[,'obesity.']),]
+
+vis_data <- data.frame(vis_data, 
+                       obesity_rank = nrow(vis_data):1)
+
+ob_states <- vis_data
+
+ob_states$type <- "Obesity"
+ob_states <- subset(ob_states, select = c(region, obesity., obesity_rank))
+colnames(ob_states) <- c("state", "obesity", "0b_rank")
+
+#states <- subset(states, ob_states$state == tolower(states$NAME))
+
+#states <- states[-(tolower(states$NAME) != tolower(ob_states$state)),]
+
+states$NAME <- tolower(states$NAME)
+
+names <- c("puerto rico", "guam", "united states virgin islands", "commonwealth of the northern mariana islands", "american samoa")
+states <- subset(states, states$NAME != names)
+
+states_merged_ob <- geo_join( states, ob_states, "NAME", "state")
+
+pal <- colorNumeric("Greens", domain=states_merged_ob$obesity)
+
+popup_ob <- paste0("Obesity: ", as.character(states_merged_ob$obesity))
+
+leaflet() %>%
+  addProviderTiles("CartoDB.Positron") %>%
+  setView(-92, 35, zoom = 4) %>%
+  addPolygons(data = states_merged_ob,
+              fillColor = ~pal(states_merged_ob$obesity),
+              fillOpacity = 0.7,
+              weight = 0.2,
+              smoothFactor = 0.2,
+              popup = ~popup_ob) %>%
+  addLegend(pal = pal,
+            values = states_merged_ob$obesity,
+            position = "bottomright",
+            title = "Obesity")
+
+
+
+# map <- states %>%
+#   leaflet() %>%
+#   addProviderTiles("CartoDB.Positron") %>%
+#   setView(lat = 37.0902, lng = -95.7129, zoom = 4) %>%
+#   addCircleMarkers(lng = vis_data$Lng,
+#                    lat = vis_data$Lat,
+#                    color = "Red",
+#                    weight = 1,
+#                    radius = exp((2/mean(vis_data$obesity.))*vis_data$obesity.),
+#                    label = paste(vis_data$region,
+#                                  "; Obesity Rank: ", as.character(vis_data$obesity_rank),
+#                                  "; Obesity Rate: ", as.character(vis_data$obesity.))) %>%
+#   addScaleBar(position = "topright")
+# 
+# map
+
+```
+
+Average Life Expectancy Leaflet visualization
+
+```{r}
+#Save different Lng and Lat in our 'visual' data frame combined with our data data frame 
+vis_data <- data[order(data[,'region']),]
+
+address_and_code <- address_and_code[order(address_and_code[,'State']),]
+
+vis_data <- data.frame(vis_data, 
+                       Lng = address_and_code$Lng, 
+                       Lat = address_and_code$Lat)
+
+vis_data <- vis_data[order(vis_data[,'avglifeexp']),]
+
+vis_data <- data.frame(vis_data, 
+                       avglifeexp_rank = nrow(vis_data):1)
+
+ale_states <- vis_data
+
+ale_states$type <- "Average Life Expectancy"
+ale_states <- subset(ale_states, select = c(region, avglifeexp, avglifeexp_rank))
+colnames(ale_states) <- c("state", "avglifeexp", "ale_rank")
+
+#states <- subset(states, ob_states$state == tolower(states$NAME))
+
+#states <- states[-(tolower(states$NAME) != tolower(ob_states$state)),]
+
+states$NAME <- tolower(states$NAME)
+
+names <- c("puerto rico", "guam", "united states virgin islands", "commonwealth of the northern mariana islands", "american samoa")
+states <- subset(states, states$NAME != names)
+
+states_merged_ale <- geo_join( states, ale_states, "NAME", "state")
+
+pal <- colorNumeric("Reds", domain=states_merged_ale$avglifeexp, reverse = TRUE)
+
+popup_ale <- paste0("Average Life Expectancy: ", as.character(states_merged_ale$avglifeexp))
+
+leaflet() %>%
+  addProviderTiles("CartoDB.Positron") %>%
+  setView(-92, 35, zoom = 4) %>%
+  addPolygons(data = states_merged_ale,
+              fillColor = ~pal(states_merged_ale$avglifeexp),
+              fillOpacity = 0.7,
+              weight = 0.2,
+              smoothFactor = 0.2,
+              popup = ~popup_ale) %>%
+  addLegend(pal = pal,
+            values = states_merged_ale$avglifeexp,
+            position = "bottomright",
+            title = "Average Life Expectancy")
+
+
+
+```
+
+```{r}
+#Save different Lng and Lat in our 'visual' data frame combined with our data data frame 
+
+vis_data <- data[order(data[,'region']),]
+
+address_and_code <- address_and_code[order(address_and_code[,'State']),]
+
+vis_data <- data.frame(vis_data, 
+                       Lng = address_and_code$Lng, 
+                       Lat = address_and_code$Lat)
+
+#Create new data to take Obesity into consideration
+vis_data <- data.frame(vis_data, 
+                       avglifeexp_div_obesity = (vis_data$avglifeexp/vis_data$obesity.))
+
+#Order by avg life exp/obesity and give rankings 
+vis_data <- vis_data[order(vis_data[,'avglifeexp_div_obesity']),]
+
+vis_data <- data.frame(vis_data, 
+                       avglifeexp_div_obesity_rank = nrow(vis_data):1)
+
+ale_ob_states <- vis_data
+
+
+ale_ob_states$type <- "Average Life Expectancy/Obesity"
+ale_ob_states <- subset(ale_ob_states, select = c(region, avglifeexp_div_obesity, avglifeexp_div_obesity_rank))
+colnames(ale_ob_states) <- c("state", "avglifeexp_div_obesity", "avglifeexp_div_obesity_rank")
+
+
+#Combined and delete certain rows
+states$NAME <- tolower(states$NAME)
+
+names <- c("puerto rico", "guam", "united states virgin islands", "commonwealth of the northern mariana islands", "american samoa")
+states <- subset(states, states$NAME != names)
+
+states_merged_ale_ob <- geo_join( states, ale_ob_states, "NAME", "state")
+
+
+pal <- colorNumeric("Blues", domain=states_merged_ale_ob$avglifeexp_div_obesity, reverse = TRUE)
+
+popup_ale_ob <- paste0("Average Life Expectancy/Obesity: ", as.character(states_merged_ale_ob$avglifeexp_div_obesity))
+
+leaflet() %>%
+  addProviderTiles("CartoDB.Positron") %>%
+  setView(-92, 35, zoom = 4) %>%
+  addPolygons(data = states_merged_ale_ob,
+              fillColor = ~pal(states_merged_ale_ob$avglifeexp_div_obesity),
+              fillOpacity = 0.7,
+              weight = 0.2,
+              smoothFactor = 0.2,
+              popup = ~popup_ale_ob) %>%
+  addLegend(pal = pal,
+            values = states_merged_ale_ob$avglifeexp_div_obesity,
+            position = "bottomright",
+            title = "Average Life Expectancy/Obesity")
+```
+
+```{r}
+#Save different Lng and Lat in our 'visual' data frame combined with our data data frame 
+
+vis_data <- data[order(data[,'region']),]
+
+address_and_code <- address_and_code[order(address_and_code[,'State']),]
+
+vis_data <- data.frame(vis_data, 
+                       Lng = address_and_code$Lng, 
+                       Lat = address_and_code$Lat)
+
+#Order by avg life exp/obesity and give rankings 
+vis_data <- vis_data[order(vis_data[,'prescriptionfill.p']),]
+
+vis_data <- data.frame(vis_data, 
+                       prescriptionfill.p_rank = nrow(vis_data):1)
+
+pres.p_states <- vis_data
+
+
+pres.p_states$type <- "Average Life Expectancy/Obesity"
+pres.p_states <- subset(pres.p_states, select = c(region, prescriptionfill.p, prescriptionfill.p_rank))
+colnames(pres.p_states) <- c("state", "prescriptionfill.p", "prescriptionfill.p_rank")
+
+
+#Combined and delete certain rows
+states$NAME <- tolower(states$NAME)
+
+names <- c("puerto rico", "guam", "united states virgin islands", "commonwealth of the northern mariana islands", "american samoa")
+states <- subset(states, states$NAME != names)
+
+states_merged_pres.p <- geo_join( states, pres.p_states, "NAME", "state")
+
+
+pal <- colorNumeric("Purples", domain=states_merged_pres.p$prescriptionfill.p, reverse = FALSE)
+
+popup_pres.p <- paste0("Prescriptionfill.p: ", as.character(states_merged_pres.p$prescriptionfill.p))
+
+leaflet() %>%
+  addProviderTiles("CartoDB.Positron") %>%
+  setView(-92, 35, zoom = 4) %>%
+  addPolygons(data = states_merged_pres.p,
+              fillColor = ~pal(states_merged_pres.p$prescriptionfill.p),
+              fillOpacity = 0.7,
+              weight = 0.2,
+              smoothFactor = 0.2,
+              popup = ~popup_pres.p) %>%
+  addLegend(pal = pal,
+            values = states_merged_pres.p$prescriptionfill.p,
+            position = "bottomright",
+            title = "Prescriptionfill.p")
+```
+
+```{r}
+#Save different Lng and Lat in our 'visual' data frame combined with our data data frame 
+
+vis_data <- data[order(data[,'region']),]
+
+address_and_code <- address_and_code[order(address_and_code[,'State']),]
+
+vis_data <- data.frame(vis_data, 
+                       Lng = address_and_code$Lng, 
+                       Lat = address_and_code$Lat)
+
+#Order by avg life exp/obesity and give rankings 
+vis_data <- vis_data[order(vis_data[,'bingedrink.']),]
+
+vis_data <- data.frame(vis_data, 
+                       bingedrink._rank = nrow(vis_data):1)
+
+bingedrink._states <- vis_data
+
+
+bingedrink._states$type <- "Bingedrink"
+bingedrink._states <- subset(bingedrink._states, select = c(region, bingedrink., bingedrink._rank))
+colnames(bingedrink._states) <- c("state", "bingedrink.", "bingedrink._rank")
+
+
+#Combined and delete certain rows
+states$NAME <- tolower(states$NAME)
+
+names <- c("puerto rico", "guam", "united states virgin islands", "commonwealth of the northern mariana islands", "american samoa")
+states <- subset(states, states$NAME != names)
+
+states_merged_bingedrink. <- geo_join( states, bingedrink._states, "NAME", "state")
+
+
+pal <- colorNumeric("Blues", domain=states_merged_bingedrink.$bingedrink., reverse = FALSE)
+
+popup_bingedrink. <- paste0("bingedrink: ", as.character(states_merged_bingedrink.$bingedrink.))
+
+leaflet() %>%
+  addProviderTiles("CartoDB.Positron") %>%
+  setView(-92, 35, zoom = 4) %>%
+  addPolygons(data = states_merged_bingedrink.,
+              fillColor = ~pal(states_merged_bingedrink.$bingedrink.),
+              fillOpacity = 0.7,
+              weight = 0.2,
+              smoothFactor = 0.2,
+              popup = ~popup_bingedrink.) %>%
+  addLegend(pal = pal,
+            values = states_merged_bingedrink.$bingedrink.,
+            position = "bottomright",
+            title = "Bingedrink")
+```
+
+```{r}
+#Save different Lng and Lat in our 'visual' data frame combined with our data data frame 
+
+vis_data <- data[order(data[,'region']),]
+
+address_and_code <- address_and_code[order(address_and_code[,'State']),]
+
+vis_data <- data.frame(vis_data, 
+                       Lng = address_and_code$Lng, 
+                       Lat = address_and_code$Lat)
+
+#Order by avg life exp/obesity and give rankings 
+vis_data <- vis_data[order(vis_data[,'smoker.']),]
+
+vis_data <- data.frame(vis_data, 
+                       smoker._rank = nrow(vis_data):1)
+
+smoker._states <- vis_data
+
+
+smoker._states$type <- "Smoker"
+smoker._states <- subset(smoker._states, select = c(region, smoker., smoker._rank))
+colnames(smoker._states) <- c("state", "smoker.", "smoker._rank")
+
+
+#Combined and delete certain rows
+states$NAME <- tolower(states$NAME)
+
+names <- c("puerto rico", "guam", "united states virgin islands", "commonwealth of the northern mariana islands", "american samoa")
+states <- subset(states, states$NAME != names)
+
+states_merged_smoker. <- geo_join( states, smoker._states, "NAME", "state")
+
+
+pal <- colorNumeric("Oranges", domain=states_merged_smoker.$smoker., reverse = FALSE)
+
+popup_smoker. <- paste0("Smoker: ", as.character(states_merged_smoker.$smoker.))
+
+leaflet() %>%
+  addProviderTiles("CartoDB.Positron") %>%
+  setView(-92, 35, zoom = 4) %>%
+  addPolygons(data = states_merged_smoker.,
+              fillColor = ~pal(states_merged_smoker.$smoker.),
+              fillOpacity = 0.7,
+              weight = 0.2,
+              smoothFactor = 0.2,
+              popup = ~popup_smoker.) %>%
+  addLegend(pal = pal,
+            values = states_merged_smoker.$smoker.,
+            position = "bottomright",
+            title = "Smoker")
+```
+
+```{r}
+#Creation of a single state factor to give an idea of how healthy or unhealthy a state is. Lower number the less healthy, higher number more healthy. Created by using a weighted average of each variables' significance (p-value from linear model) multiplied by each variables' ranking of every variable. Lower ranking the worst performing relative to all other states, highest ranking means best performing. Then we subtract the mean state factor from each state to give us an idea how they perform.
+
+
+summary(lm)$coefficients
+
+p_val <- summary(lm)$coefficients[29:36]
+
+p_val
+p_val[4] <- (p_val[4]+p_val[8])/2
+p_val
+
+p_wht <- 1-p_val
+
+p_wht
+
+sum_p_wht <- sum(p_wht)
+sum_p_wht
+
+
+vis_data <- data
+
+vis_data <- vis_data[order(vis_data[,'incomeadj']),]
+
+vis_data <- data.frame(vis_data, 
+                       incomeadj_rank = 1:nrow(vis_data))
+
+vis_data <- vis_data[order(vis_data[,'drugscore']),]
+
+vis_data <- data.frame(vis_data, 
+                       drugscore_rank = nrow(vis_data):1)
+
+vis_data <- vis_data[order(vis_data[,'diabetes.']),]
+
+vis_data <- data.frame(vis_data, 
+                       diabetes._rank = nrow(vis_data):1)
+
+vis_data <- vis_data[order(vis_data[,'prescriptionfill.p']),]
+
+vis_data <- data.frame(vis_data, 
+                       prescriptionfill.p_rank = nrow(vis_data):1)
+
+vis_data <- vis_data[order(vis_data[,'bachelors']),]
+
+vis_data <- data.frame(vis_data, 
+                       bachelors_rank = 1:nrow(vis_data))
+
+vis_data <- vis_data[order(vis_data[,'smoker.']),]
+
+vis_data <- data.frame(vis_data, 
+                       smoker._rank = nrow(vis_data):1)
+
+vis_data <- vis_data[order(vis_data[,'bingedrink.']),]
+
+vis_data <- data.frame(vis_data, 
+                       bingedrink._rank = nrow(vis_data):1)
+
+vis_data <- vis_data[order(vis_data[,'obesity.']),]
+
+vis_data <- data.frame(vis_data, 
+                       obesity._rank = nrow(vis_data):1)
+
+vis_data
+
+
+vis_data <- data.frame(vis_data, 
+                       state_factor = ((vis_data$incomeadj_rank)*p_wht[1] + 
+                                         (vis_data$drugscore_rank)*p_wht[2] + 
+                                         (vis_data$diabetes._rank)*p_wht[3] + 
+                                         (vis_data$prescriptionfill.p_rank)*p_wht[4] + 
+                                         (vis_data$bachelors_rank)*p_wht[5] + 
+                                         (vis_data$smoker._rank)*p_wht[6] + 
+                                         (vis_data$bingedrink._rank)*p_wht[7] + 
+                                         (vis_data$obesity._rank)*p_wht[8])/sum_p_wht)
+
+vis_data$state_factor_adj <- vis_data$state_factor/mean(vis_data$state_factor)
+vis_data
+
+```
+
+```{r}
+#Save different Lng and Lat in our 'visual' data frame combined with our data data frame 
+
+address_and_code <- address_and_code[order(address_and_code[,'State']),]
+
+vis_data <- data.frame(vis_data, 
+                       Lng = address_and_code$Lng, 
+                       Lat = address_and_code$Lat)
+
+#Order by avg life exp/obesity and give rankings 
+vis_data <- vis_data[order(vis_data[,'state_factor_adj']),]
+
+vis_data <- data.frame(vis_data, 
+                       state_factor_adj_rank = nrow(vis_data):1)
+
+state_factor_adj_states <- vis_data
+
+
+state_factor_adj_states$type <- "State factor adj"
+state_factor_adj_states <- subset(state_factor_adj_states, select = c(region, state_factor_adj, state_factor_adj_rank))
+colnames(state_factor_adj_states) <- c("state", "state_factor_adj", "state_factor_adj_rank")
+
+
+#Combined and delete certain rows
+states$NAME <- tolower(states$NAME)
+
+names <- c("puerto rico", "guam", "united states virgin islands", "commonwealth of the northern mariana islands", "american samoa")
+states <- subset(states, states$NAME != names)
+
+states_merged_state_factor_adj <- geo_join( states, state_factor_adj_states, "NAME", "state")
+
+
+pal <- colorNumeric("Greens", domain=states_merged_state_factor_adj$state_factor_adj, reverse = TRUE)
+
+popup_state_factor_adj <- paste0("State factor adj: ", as.character(states_merged_state_factor_adj$state_factor_adj))
+
+leaflet() %>%
+  addProviderTiles("CartoDB.Positron") %>%
+  setView(-92, 35, zoom = 4) %>%
+  addPolygons(data = states_merged_state_factor_adj,
+              fillColor = ~pal(states_merged_state_factor_adj$state_factor_adj),
+              fillOpacity = 0.7,
+              weight = 0.2,
+              smoothFactor = 0.2,
+              popup = ~popup_state_factor_adj) %>%
+  addLegend(pal = pal,
+            values = states_merged_state_factor_adj$state_factor_adj,
+            position = "bottomright",
+            title = "State factor adj")
+```
+
+```{r}
+test <- lm(vis_data$avglifeexp ~ vis_data$state_factor_adj)
+summary(test)
+plot(test)
+
+testframe<- data.frame(vis_data$avglifeexp, 
+                       vis_data$state_factor_adj)
+ggplot(data = testframe) +
+  geom_smooth(mapping = aes(x=vis_data$avglifeexp, y = vis_data$state_factor_adj)) +
+  geom_point(mapping = aes(x=vis_data$avglifeexp, y = vis_data$state_factor_adj))
+
+```
